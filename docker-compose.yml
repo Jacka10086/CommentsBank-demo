@@ -1,17 +1,21 @@
-version: "2"
+version: "3.8"
 services:
   app:
-    build: ./app
+    build: 
+      context: ./app
+      dockerfile: Dockerfile
     volumes:
       - ./app:/app
-    links:
-      - db
     ports:
       - "5000:5000"
     environment:
       - FLASK_ENV=development
       - FLASK_APP=app.py
     command: flask run --host=0.0.0.0
+    depends_on:
+      - db
+    networks:
+      - shared
 
   db:
     image: mysql:5.7
@@ -19,5 +23,14 @@ services:
       - "32000:3306"
     environment:
       MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: 'bankdb'
     volumes:
-      - ./db:/docker-entrypoint-initdb.d/:r
+      - db-data:/var/lib/mysql
+    networks:
+      - shared
+
+volumes:
+  db-data:
+
+networks:
+  shared:
