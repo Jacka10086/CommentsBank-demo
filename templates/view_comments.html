@@ -11,7 +11,7 @@
     {% if abstracts_comments %}
         <ul>
             {% for comment in abstracts_comments %}
-                <li>{{ comment.content }}</li>
+                <li>{{ comment.comment }}</li> <!-- 修改这里 -->
             {% endfor %}
         </ul>
     {% else %}
@@ -22,7 +22,7 @@
     {% if intros_comments %}
         <ul>
             {% for comment in intros_comments %}
-                <li>{{ comment.content }}</li>
+                <li>{{ comment.comment }}</li> <!-- 修改这里 -->
             {% endfor %}
         </ul>
     {% else %}

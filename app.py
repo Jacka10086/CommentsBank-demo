@@ -3,12 +3,14 @@ from flask import Flask, render_template, request, redirect, url_for, session, f
 import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+from email_validator import validate_email, EmailNotValidError
 import os
 from itsdangerous import URLSafeTimedSerializer
 import mysql.connector
 import json
 
 app = Flask(__name__)
+app.secret_key = '12345'
 
 
 def get_db_connection():
@@ -17,16 +19,14 @@ def get_db_connection():
         'password': 'root',
         'host': 'db',
         'port': '3306',
-        'database': 'knights'
+        'database': 'bankdb'
     }
-    connection = mysql.connector.connect(**config)
-    cursor = connection.cursor()
-    cursor.execute('SELECT * FROM Comments_bank')
-    results = [{name: color} for (name, color) in cursor]
-    cursor.close()
-    connection.close()
-
-    return results
+    try:
+        connection = mysql.connector.connect(**config)
+        return connection
+    except mysql.connector.Error as err:
+        print("Error connecting to MySQL database: {}".format(err))
+        return None
 
 
 @app.route('/')
@@ -50,18 +50,26 @@ def register():
             flash('Password is required!')
             return render_template('register.html'), 400
         
+       # ...验证和邮箱检查的代码...
         connection = get_db_connection()
-        cursor = connection.cursor()
-        
+        if connection is None:
+            flash('Unable to connect to the database. Please try again later.')
+            return render_template('register.html'), 500
+        cursor = connection.cursor(buffered=True)
         try:
-            cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
-            result = cursor.fetchone()
-            if result:
+            # 检查邮箱是否已存在
+            cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
+            if cursor.fetchone() is not None:
                 flash('Email already exists!')
                 return render_template('register.html'), 400
+            # 保存新用户
             hashed_password = generate_password_hash(password)
-            cursor.execute("INSERT INTO users (email, Password) VALUES (%s, %s)", (email, hashed_password))  # 注意列名的大小写
+            cursor.execute("INSERT INTO users (email, password) VALUES (%s, %s)", (email, hashed_password))
             connection.commit()
+            flash('Registration successful!')
+            session['email'] = email
+            session['logged_in'] = True
+            return redirect(url_for('home'))
         except mysql.connector.Error as err:
             flash('An error occurred during registration. Please try again.')
             print("Something went wrong: {}".format(err))
@@ -69,46 +77,32 @@ def register():
         finally:
             cursor.close()
             connection.close()
-        session['email'] = email
-        session['logged_in'] = True
-        flash('Registration successful!')
-        return redirect(url_for('home'))
     return render_template('register.html')
-
-def get_db_cursor():
-    db = mysql.connector.connect(**config)
-    return db.cursor()
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
         email = request.form.get('email')
         password = request.form.get('password')
-        if not email or not password:
-            flash('Email and password are required!')
-            return render_template('login.html'), 400
-
         connection = get_db_connection()
-        cursor = connection.cursor()
-
+        if connection is None:
+            flash('Unable to connect to the database. Please try again later.')
+            return render_template('login.html'), 500
+        cursor = connection.cursor(buffered=True)
         try:
-            cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
+            cursor.execute("SELECT password FROM users WHERE email = %s", (email,))
             result = cursor.fetchone()
-            if not result:
-                flash('Email not found!')
-                return render_template('login.html'), 404
-            
-            hashed_password = result[1]  # 假设密码在第二列
-            if check_password_hash(hashed_password, password):
-                session['email'] = email
-                session['logged_in'] = True
-                return redirect(url_for('home'))
-            else:
-                flash('Incorrect password!')
-                return render_template('login.html'), 401
-        except mysql.connector.Error as err:
-            flash('An error occurred. Please try again.')
-            print("Something went wrong: {}".format(err))
+            if result is None:
+                flash('Invalid email or password.')
+                return render_template('login.html'), 400
+            hashed_password = result[0]
+            if not check_password_hash(hashed_password, password):
+                flash('Invalid email or password.')
+                return render_template('login.html'), 400
+            session['email'] = email
+            session['logged_in'] = True
+            flash('Login successful!')
+            return redirect(url_for('home'))
         finally:
             cursor.close()
             connection.close()
@@ -157,67 +151,95 @@ def comments():
 
 @app.route('/submit_comments', methods=['POST'])
 def submit_comments():
-    if 'logged_in' not in session:
+    if 'logged_in' not in session or 'email' not in session:
         flash('请先登录再提交评论。')
         return redirect(url_for('login'))
     
-    email = session['email']  # 从会话中获取用户邮箱
+    user_email = session['email']  # 从会话中获取用户邮箱
     abstracts_ids = request.form.getlist('abstracts_ids')  # 获取选中的摘要ID
     intros_ids = request.form.getlist('intros_ids')  # 获取选中的介绍材料ID
 
     connection = get_db_connection()
-    cursor = connection.cursor()
+    if not connection:
+        flash('数据库连接失败。')
+        return redirect(url_for('comments'))
 
     try:
-        # 遍历所有选中的摘要ID，并插入到abstracts_comments表中
-        for abstract_id in abstracts_ids:
-            cursor.execute(
-                "INSERT INTO abstracts_comments (email, content) SELECT %s, content FROM abstracts WHERE id = %s",
-                (email, abstract_id)
-            )
+        with connection.cursor() as cursor:
+            # 获取当前用户的 user_id
+            cursor.execute("SELECT id FROM users WHERE email = %s", (user_email,))
+            user_id_result = cursor.fetchone()
+            if user_id_result:
+                user_id = user_id_result[0]
 
-        # 遍历所有选中的介绍材料ID，并插入到introductory_comments表中
-        for intro_id in intros_ids:
-            cursor.execute(
-                "INSERT INTO introductory_comments (email, content) SELECT %s, content FROM introductory_materials WHERE id = %s",
-                (email, intro_id)
-            )
+                # 遍历所有选中的摘要ID，并插入到abstracts_comments表中
+                for abstract_id in abstracts_ids:
+                    cursor.execute(
+                        "INSERT INTO abstracts_comments (user_id, abstract_id, comment) VALUES (%s, %s, (SELECT content FROM abstracts WHERE id = %s))",
+                        (user_id, abstract_id, abstract_id)
+                    )
 
-        connection.commit()  # 提交事务
-        flash('评论提交成功。')
+                # 遍历所有选中的介绍材料ID，并插入到introductory_comments表中
+                for intro_id in intros_ids:
+                    cursor.execute(
+                        "INSERT INTO introductory_comments (user_id, intro_material_id, comment) VALUES (%s, %s, (SELECT content FROM introductory_materials WHERE id = %s))",
+                        (user_id, intro_id, intro_id)
+                    )
+
+                connection.commit()
+                flash('评论提交成功。')
+            else:
+                flash('用户未找到。')
+                return redirect(url_for('comments'))
+
     except mysql.connector.Error as err:
+        connection.rollback()
         flash(f'提交评论时发生错误：{err}')
-        connection.rollback()  # 如果出现错误则回滚事务
+        return redirect(url_for('comments'))
     finally:
-        cursor.close()  # 关闭游标
-        connection.close()  # 关闭数据库连接
+        if connection.is_connected():
+            connection.close()
 
     return redirect(url_for('home'))
 
 
 
-
 @app.route('/view_comments')
 def view_comments():
-    if 'logged_in' not in session:
+    if 'logged_in' not in session or 'email' not in session:
         flash('请先登录再查看评论。')
         return redirect(url_for('login'))
 
     email = session['email']
     connection = get_db_connection()
-    cursor = connection.cursor(dictionary=True)
-
+    
+    if not connection:
+        flash('数据库连接失败。')
+        return render_template('view_comments.html', abstracts_comments=[], intros_comments=[])
+    
     try:
-        cursor.execute("SELECT content FROM abstracts_comments WHERE email = %s", (email,))
-        abstracts_comments = cursor.fetchall()
-        cursor.execute("SELECT content FROM introductory_comments WHERE email = %s", (email,))
-        intros_comments = cursor.fetchall()
+        with connection.cursor(dictionary=True) as cursor:
+            # 先获取用户的ID
+            cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
+            user_result = cursor.fetchone()
+            user_id = user_result['id'] if user_result else None
+
+            # 如果有有效的user_id，则获取该用户的评论
+            if user_id:
+                cursor.execute("SELECT comment FROM abstracts_comments WHERE user_id = %s", (user_id,))
+                abstracts_comments = cursor.fetchall()
+
+                cursor.execute("SELECT comment FROM introductory_comments WHERE user_id = %s", (user_id,))
+                intros_comments = cursor.fetchall()
+            else:
+                flash('未找到用户。')
+                return redirect(url_for('home'))
+
     except mysql.connector.Error as err:
         flash(f'获取评论时发生错误：{err}')
         abstracts_comments = []
         intros_comments = []
     finally:
-        cursor.close()
         connection.close()
 
     return render_template('view_comments.html', abstracts_comments=abstracts_comments, intros_comments=intros_comments)
