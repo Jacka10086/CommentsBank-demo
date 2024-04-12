@@ -24,8 +24,6 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: 'bankdb'
-    volumes:
-      - db-data:/var/lib/mysql
     networks:
       - shared
 
