@@ -226,10 +226,10 @@ def view_comments():
 
             # 如果有有效的user_id，则获取该用户的评论
             if user_id:
-                cursor.execute("SELECT comment FROM abstracts_comments WHERE user_id = %s", (user_id,))
+                cursor.execute("SELECT id, comment FROM abstracts_comments WHERE user_id = %s", (user_id,))
                 abstracts_comments = cursor.fetchall()
 
-                cursor.execute("SELECT comment FROM introductory_comments WHERE user_id = %s", (user_id,))
+                cursor.execute("SELECT id, comment FROM introductory_comments WHERE user_id = %s", (user_id,))
                 intros_comments = cursor.fetchall()
             else:
                 flash('未找到用户。')
@@ -244,6 +244,50 @@ def view_comments():
 
     return render_template('view_comments.html', abstracts_comments=abstracts_comments, intros_comments=intros_comments)
 
+
+@app.route('/delete_comment/<int:comment_id>/<comment_type>', methods=['POST'])
+def delete_comment(comment_id, comment_type):
+    if 'logged_in' not in session or 'email' not in session:
+        flash('请先登录。')
+        return redirect(url_for('login'))
+    
+    connection = get_db_connection()
+    if not connection:
+        flash('数据库连接失败。')
+        return redirect(url_for('view_comments'))
+    
+    try:
+        with connection.cursor(dictionary=True) as cursor:
+            email = session['email']
+            # 先获取用户的ID
+            cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
+            user = cursor.fetchone()
+            user_id = user['id'] if user else None
+
+            # 检查评论是否属于当前登录用户
+            if comment_type == 'abstract':
+                cursor.execute("SELECT user_id FROM abstracts_comments WHERE id = %s", (comment_id,))
+            else:
+                cursor.execute("SELECT user_id FROM introductory_comments WHERE id = %s", (comment_id,))
+            
+            comment_owner = cursor.fetchone()
+            if comment_owner and comment_owner['user_id'] == user_id:
+                # 用户拥有该评论，可以删除
+                if comment_type == 'abstract':
+                    cursor.execute("DELETE FROM abstracts_comments WHERE id = %s", (comment_id,))
+                else:
+                    cursor.execute("DELETE FROM introductory_comments WHERE id = %s", (comment_id,))
+                connection.commit()
+                flash('评论已删除。')
+            else:
+                flash('您无法删除该评论。')
+    except mysql.connector.Error as err:
+        connection.rollback()
+        flash(f'删除评论时发生错误：{err}')
+    finally:
+        connection.close()
+
+    return redirect(url_for('view_comments'))
 
 
 

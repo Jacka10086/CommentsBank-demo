@@ -1,0 +1,15 @@
+<!-- comments_confirmation.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Comment Edited</title>
+</head>
+<body>
+    <h1>Comment Edited Successfully</h1>
+    <p><strong>Email:</strong> {{ email }}</p>
+    <p><strong>Original Comment:</strong> {{ original }}</p>
+    <p><strong>Edited Comment:</strong> {{ edited }}</p>
+    <a href="{{ url_for('comments') }}">Confirm</a>
+</body>
+</html>
