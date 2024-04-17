@@ -31,6 +31,15 @@ CREATE TABLE IF NOT EXISTS introductory_comments (
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (intro_material_id) REFERENCES introductory_materials(id)
 );
+CREATE TABLE new_comments (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    comment TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+ALTER TABLE users ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE new_comments
+ADD COLUMN verified BOOLEAN NOT NULL DEFAULT FALSE;
 
 
  */
